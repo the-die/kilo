@@ -294,7 +294,7 @@ int editorReadKey(int fd) {
                 case 'F': return END_KEY;
                 }
             }
-            break;
+            return ESC;
         default:
             return c;
         }
