@@ -89,6 +89,7 @@ typedef struct erow {
                            check. */
 } erow;
 
+// unused
 typedef struct hlcolor {
     int r,g,b;
 } hlcolor;
@@ -111,6 +112,7 @@ struct editorConfig {
 
 static struct editorConfig E;
 
+// https://vt100.net/docs/vt100-ug/chapter3.html
 enum KEY_ACTION{
         KEY_NULL = 0,       /* NULL */
         CTRL_C = 3,         /* Ctrl-c */
@@ -201,9 +203,27 @@ struct editorSyntax HLDB[] = {
 
 static struct termios orig_termios; /* In order to restore at exit.*/
 
+// https://man7.org/linux/man-pages/man3/tcsetattr.3p.html
 void disableRawMode(int fd) {
     /* Don't even check the return value as it's too late. */
     if (E.rawmode) {
+        // The tcsetattr() function shall set the parameters associated with
+        // the terminal referred to by the open file descriptor fildes (an
+        // open file descriptor associated with a terminal) from the termios
+        // structure referenced by termios_p as follows:
+
+        // *  If optional_actions is TCSANOW, the change shall occur
+        //     immediately.
+
+        // *  If optional_actions is TCSADRAIN, the change shall occur
+        //     after all output written to fildes is transmitted. This
+        //     function should be used when changing parameters that affect
+        //     output.
+
+        // *  If optional_actions is TCSAFLUSH, the change shall occur
+        //     after all output written to fildes is transmitted, and all
+        //     input so far received but not read shall be discarded before
+        //     the change is made.
         tcsetattr(fd,TCSAFLUSH,&orig_termios);
         E.rawmode = 0;
     }
@@ -214,15 +234,39 @@ void editorAtExit(void) {
     disableRawMode(STDIN_FILENO);
 }
 
+// https://en.wikipedia.org/wiki/POSIX_terminal_interface
+// https://man7.org/linux/man-pages/man3/termios.3.html
+// https://man7.org/linux/man-pages/man3/isatty.3.html
+// https://man7.org/linux/man-pages/man3/atexit.3.html
+// https://man7.org/linux/man-pages/man3/tcgetattr.3p.html
+// https://man7.org/linux/man-pages/man0/termios.h.0p.html
 /* Raw mode: 1960 magic shit. */
 int enableRawMode(int fd) {
     struct termios raw;
 
     if (E.rawmode) return 0; /* Already enabled. */
+    // The isatty() function tests whether fd is an open file descriptor
+    // referring to a terminal.
+    // isatty() returns 1 if fd is an open file descriptor referring to
+    // a terminal; otherwise 0 is returned, and errno is set to indicate
+    // the error.
     if (!isatty(STDIN_FILENO)) goto fatal;
+    // The atexit() function registers the given function to be called
+    // at normal process termination, either via exit(3) or via return
+    // from the program's main().  Functions so registered are called in
+    // the reverse order of their registration; no arguments are passed.
+    // The same function may be registered multiple times: it is called
+    // once for each registration.
     atexit(editorAtExit);
+    // The tcgetattr() function shall get the parameters associated with
+    // the terminal referred to by fildes and store them in the termios
+    // structure referenced by termios_p.  The fildes argument is an
+    // open file descriptor associated with a terminal.
+    // Upon successful completion, 0 shall be returned. Otherwise, -1
+    // shall be returned and errno set to indicate the error.
     if (tcgetattr(fd,&orig_termios) == -1) goto fatal;
 
+    // https://man7.org/linux/man-pages/man0/termios.h.0p.html
     raw = orig_termios;  /* modify the original mode */
     /* input modes: no break, no CR to NL, no parity check, no strip char,
      * no start/stop output control. */
@@ -231,7 +275,7 @@ int enableRawMode(int fd) {
     raw.c_oflag &= ~(OPOST);
     /* control modes - set 8 bit chars */
     raw.c_cflag |= (CS8);
-    /* local modes - choing off, canonical off, no extended functions,
+    /* local modes - echoing off, canonical off, no extended functions,
      * no signal chars (^Z,^C) */
     raw.c_lflag &= ~(ECHO | ICANON | IEXTEN | ISIG);
     /* control chars - set return condition: min number of bytes and timer. */
@@ -248,6 +292,7 @@ fatal:
     return -1;
 }
 
+// https://man7.org/linux/man-pages/man2/read.2.html
 /* Read a key from the terminal put in raw mode, trying to handle
  * escape sequences. */
 int editorReadKey(int fd) {
@@ -301,6 +346,27 @@ int editorReadKey(int fd) {
     }
 }
 
+/*
+ * https://vt100.net/docs/vt100-ug/chapter3.html
+ *
+ * DSR – Device Status Report
+ *
+ * ESC [ Ps n
+ *
+ * Requests and reports the general status of the VT100 according to the following parameter(s).
+ *
+ * Parameter: Parameter Meaning
+ * 6: Command from host – Please report active position (using a CPR control sequence)
+ *
+ * CPR – Cursor Position Report – VT100 to Host
+ *
+ * ESC [ Pn ; Pn R
+ *
+ * The CPR sequence reports the active position by means of the parameters. This sequence has two
+ * parameter values, the first specifying the line and the second specifying the column. The default
+ * condition with no parameters present, or parameters of 0, is equivalent to a cursor at home
+ * position.
+ */
 /* Use the ESC [6n escape sequence to query the horizontal cursor position
  * and return it. On error -1 is returned, on success the position of the
  * cursor is stored at *rows and *cols and 0 is returned. */
@@ -325,6 +391,73 @@ int getCursorPosition(int ifd, int ofd, int *rows, int *cols) {
     return 0;
 }
 
+/*
+ * https://pubs.opengroup.org/onlinepubs/9699919799.2018edition/
+ * https://man7.org/linux/man-pages/man2/ioctl.2.html
+ *
+ * int ioctl(int fildes, int request, arg...);
+ *
+ * The ioctl() function shall perform a variety of control functions on STREAMS devices. For
+ * non-STREAMS devices, the functions performed by this call are unspecified. The request argument
+ * and an optional third argument (with varying type) shall be passed to and interpreted by the
+ * appropriate part of the STREAM associated with fildes.
+ *
+ * The fildes argument is an open file descriptor that refers to a device.
+ *
+ * The request argument selects the control function to be performed and shall depend on the STREAMS
+ * device being addressed.
+ *
+ * The arg argument represents additional information that is needed by this specific STREAMS device
+ * to perform the requested function. The type of arg depends upon the particular control request,
+ * but it shall be either an integer or a pointer to a device-specific data structure.
+ */
+/*
+ * https://man7.org/linux/man-pages/man4/tty_ioctl.4.html
+ * https://refspecs.linuxfoundation.org/LSB_5.0.0/LSB-Core-generic/LSB-Core-generic/baselib-ttyio-2.html
+ *
+ * TIOCGWINSZ
+ *
+ * Get the size attributes of the terminal or pseudo-terminal identified by fd. On entry, argp shall
+ * reference a winsize structure. On return, the structure will have ws_row set to the number of
+ * rows of text (i.e. lines of text) that can be viewed on the device, and ws_col set to the number
+ * of columns (i.e. text width).
+ *
+ * Note: The number of columns stored in ws_col assumes that the terminal device is using a
+ * mono-spaced font.
+ */
+/*
+ * https://vt100.net/docs/vt100-ug/chapter3.html
+ *
+ * CUF – Cursor Forward – Host to VT100 and VT100 to Host
+ *
+ * ESC [ Pn C
+ *
+ * The CUF sequence moves the active position to the right. The distance moved is determined by the
+ * parameter. A parameter value of zero or one moves the active position one position to the right.
+ * A parameter value of n moves the active position n positions to the right. If an attempt is made
+ * to move the cursor to the right of the right margin, the cursor stops at the right margin.
+ *
+ * CUD – Cursor Down – Host to VT100 and VT100 to Host
+ *
+ * ESC [ Pn B
+ *
+ * The CUD sequence moves the active position downward without altering the column position. The
+ * number of lines moved is determined by the parameter. If the parameter value is zero or one, the
+ * active position is moved one line downward. If the parameter value is n, the active position is
+ * moved n lines downward. In an attempt is made to move the cursor below the bottom margin, the
+ * cursor stops at the bottom margin.
+ *
+ * CUP – Cursor Position
+ *
+ * ESC [ Pn ; Pn H
+ *
+ * The CUP sequence moves the active position to the position specified by the parameters. This
+ * sequence has two parameter values, the first specifying the line position and the second
+ * specifying the column position. A parameter value of zero or one for the first or second
+ * parameter moves the active position to the first line or column in the display, respectively. The
+ * default condition with no parameters present is equivalent to a cursor to home action. In the
+ * VT100, this control behaves identically with its format effector counterpart, HVP.
+ */
 /* Try to get the number of columns in the current terminal. If the ioctl()
  * call fails the function will try to query the terminal itself.
  * Returns 0 on success, -1 on error. */
@@ -409,6 +542,7 @@ void editorUpdateSyntax(erow *row) {
         in_comment = 1;
 
     while(*p) {
+        // What should be done if the previous line is within a multi-line comment?
         /* Handle // comments. */
         if (prev_sep && *p == scs[0] && *(p+1) == scs[1]) {
             /* From here to end is a comment */
@@ -448,6 +582,7 @@ void editorUpdateSyntax(erow *row) {
                 prev_sep = 0;
                 continue;
             }
+            // "in_string" is not a boolean value.
             if (*p == in_string) in_string = 0;
             p++; i++;
             continue;
@@ -470,6 +605,9 @@ void editorUpdateSyntax(erow *row) {
         }
 
         /* Handle numbers */
+        // float num?
+        // .123?
+        // 123.123.123?
         if ((isdigit(*p) && (prev_sep || row->hl[i-1] == HL_NUMBER)) ||
             (*p == '.' && i >0 && row->hl[i-1] == HL_NUMBER)) {
             row->hl[i] = HL_NUMBER;
@@ -516,6 +654,7 @@ void editorUpdateSyntax(erow *row) {
     row->hl_oc = oc;
 }
 
+// https://invisible-island.net/xterm/ctlseqs/ctlseqs.html
 /* Maps syntax highlight token types to terminal colors. */
 int editorSyntaxToColor(int hl) {
     switch(hl) {
@@ -530,6 +669,7 @@ int editorSyntaxToColor(int hl) {
     }
 }
 
+// Choose how to highlight based on the file's extension.
 /* Select the syntax highlight scheme depending on the filename,
  * setting it in the global state E.syntax. */
 void editorSelectSyntaxHighlight(char *filename) {
@@ -554,6 +694,7 @@ void editorSelectSyntaxHighlight(char *filename) {
 
 /* Update the rendered version and the syntax highlight of a row. */
 void editorUpdateRow(erow *row) {
+    // 'nonprint' is not being used.
     unsigned int tabs = 0, nonprint = 0;
     int j, idx;
 
@@ -564,12 +705,13 @@ void editorUpdateRow(erow *row) {
         if (row->chars[j] == TAB) tabs++;
 
     unsigned long long allocsize =
-        (unsigned long long) row->size + tabs*8 + nonprint*9 + 1;
+        (unsigned long long) row->size + tabs*8 + nonprint*9 + 1; // nonprint is 0
     if (allocsize > UINT32_MAX) {
         printf("Some line of the edited file is too long for kilo\n");
         exit(1);
     }
 
+    // Why not use the "allocsize" mentioned above?
     row->render = malloc(row->size + tabs*8 + nonprint*9 + 1);
     idx = 0;
     for (j = 0; j < row->size; j++) {
@@ -591,10 +733,11 @@ void editorUpdateRow(erow *row) {
  * if required. */
 void editorInsertRow(int at, char *s, size_t len) {
     if (at > E.numrows) return;
+    // The need to reallocate memory with every insertion is highly inefficient.
     E.row = realloc(E.row,sizeof(erow)*(E.numrows+1));
-    if (at != E.numrows) {
+    if (at != E.numrows) { // Not inserting at the tail/end.
         memmove(E.row+at+1,E.row+at,sizeof(E.row[0])*(E.numrows-at));
-        for (int j = at+1; j <= E.numrows; j++) E.row[j].idx++;
+        for (int j = at+1; j <= E.numrows; j++) E.row[j].idx++; // update row index
     }
     E.row[at].size = len;
     E.row[at].chars = malloc(len+1);
@@ -616,6 +759,7 @@ void editorFreeRow(erow *row) {
     free(row->hl);
 }
 
+// update highlight?
 /* Remove the row at the specified position, shifting the remainign on the
  * top. */
 void editorDelRow(int at) {
@@ -632,7 +776,7 @@ void editorDelRow(int at) {
 
 /* Turn the editor rows into a single heap-allocated string.
  * Returns the pointer to the heap-allocated string and populate the
- * integer pointed by 'buflen' with the size of the string, escluding
+ * integer pointed by 'buflen' with the size of the string, excluding
  * the final nulterm. */
 char *editorRowsToString(int *buflen) {
     char *buf = NULL, *p;
@@ -656,6 +800,7 @@ char *editorRowsToString(int *buflen) {
     return buf;
 }
 
+// Only insert within the original string content and then update the size.
 /* Insert a character at the specified position in a row, moving the remaining
  * chars on the right if needed. */
 void editorRowInsertChar(erow *row, int at, int c) {
@@ -680,6 +825,7 @@ void editorRowInsertChar(erow *row, int at, int c) {
     E.dirty++;
 }
 
+// Add the non-rendered string to the end of the row, and then render it.
 /* Append the string 's' at the end of a row */
 void editorRowAppendString(erow *row, char *s, size_t len) {
     row->chars = realloc(row->chars,row->size+len+1);
@@ -705,6 +851,7 @@ void editorInsertChar(int c) {
     int filecol = E.coloff+E.cx;
     erow *row = (filerow >= E.numrows) ? NULL : &E.row[filerow];
 
+    // Inserting multiple lines is not possible.
     /* If the row where the cursor is currently located does not exist in our
      * logical representaion of the file, add enough empty rows as needed. */
     if (!row) {
@@ -720,9 +867,11 @@ void editorInsertChar(int c) {
     E.dirty++;
 }
 
+// Insert a new line, then render and highlight the syntax.
 /* Inserting a newline is slightly complex as we have to handle inserting a
  * newline in the middle of a line, splitting the line as needed. */
 void editorInsertNewline(void) {
+    // Get the current row number and column number of the cursor.
     int filerow = E.rowoff+E.cy;
     int filecol = E.coloff+E.cx;
     erow *row = (filerow >= E.numrows) ? NULL : &E.row[filerow];
@@ -748,6 +897,7 @@ void editorInsertNewline(void) {
         editorUpdateRow(row);
     }
 fixcursor:
+    // The cursor is at the row boundary.
     if (E.cy == E.screenrows-1) {
         E.rowoff++;
     } else {
@@ -771,10 +921,11 @@ void editorDelChar() {
         editorRowAppendString(&E.row[filerow-1],row->chars,row->size);
         editorDelRow(filerow);
         row = NULL;
-        if (E.cy == 0)
+        if (E.cy == 0) // move the first line to the previous one
             E.rowoff--;
         else
             E.cy--;
+        // the previous row length
         E.cx = filecol;
         if (E.cx >= E.screencols) {
             int shift = (E.screencols-E.cx)+1;
@@ -792,6 +943,38 @@ void editorDelChar() {
     E.dirty++;
 }
 
+// ssize_t getline(char **restrict lineptr, size_t *restrict n,
+//                 FILE *restrict stream);
+//
+// getline() reads an entire line from stream, storing the address
+// of the buffer containing the text into *lineptr.  The buffer is
+// null-terminated and includes the newline character, if one was
+// found.
+//
+// If *lineptr is set to NULL before the call, then getline() will
+// allocate a buffer for storing the line.  This buffer should be
+// freed by the user program even if getline() failed.
+//
+// Alternatively, before calling getline(), *lineptr can contain a
+// pointer to a malloc(3)-allocated buffer *n bytes in size.  If the
+// buffer is not large enough to hold the line, getline() resizes it
+// with realloc(3), updating *lineptr and *n as necessary.
+//
+// In either case, on a successful call, *lineptr and *n will be
+// updated to reflect the buffer address and allocated size
+// respectively.
+//
+// On success, getline() and getdelim() return the number of
+// characters read, including the delimiter character, but not
+// including the terminating null byte ('\0').  This value can be
+// used to handle embedded null bytes in the line read.
+
+// Both functions return -1 on failure to read a line (including
+// end-of-file condition).  In the event of a failure, errno is set
+// to indicate the error.
+
+// If *lineptr was set to NULL before the call, then the buffer
+// should be freed by the user program even on failure.
 /* Load the specified program in the editor memory and returns 0 on success
  * or 1 on error. */
 int editorOpen(char *filename) {
@@ -826,15 +1009,18 @@ int editorOpen(char *filename) {
     return 0;
 }
 
+// inefficient
 /* Save the current file on disk. Return 0 on success, 1 on error. */
 int editorSave(void) {
     int len;
     char *buf = editorRowsToString(&len);
+    // https://man7.org/linux/man-pages/man2/open.2.html
     int fd = open(E.filename,O_RDWR|O_CREAT,0644);
     if (fd == -1) goto writeerr;
 
     /* Use truncate + a single write(2) call in order to make saving
      * a bit safer, under the limits of what we can do in a small editor. */
+    // https://man7.org/linux/man-pages/man3/ftruncate.3p.html
     if (ftruncate(fd,len) == -1) goto writeerr;
     if (write(fd,buf,len) != len) goto writeerr;
 
@@ -864,6 +1050,8 @@ struct abuf {
 
 #define ABUF_INIT {NULL,0}
 
+// inefficient
+// https://man7.org/linux/man-pages/man3/realloc.3p.html
 void abAppend(struct abuf *ab, const char *s, int len) {
     char *new = realloc(ab->b,ab->len+len);
 
@@ -877,6 +1065,27 @@ void abFree(struct abuf *ab) {
     free(ab->b);
 }
 
+/*
+ * https://vt100.net/docs/vt220-rm/chapter4.html
+ * https://invisible-island.net/xterm/ctlseqs/ctlseqs.html
+ *
+ * Name                 Mnemonic    Set Mode    Reset Mode
+ *
+ * Text cursor enable   DECTCEM        On          Off
+ *                                 CSI ? 25 h   CSI ? 25 l
+ *
+ * CSI H     Home
+ *
+ * CSI K     Erases from the cursor to the end of the line, including the cursor position. Line
+ *           attribute is not affected.
+ *
+ * CSI 0 K   Same as above.
+ *
+ * CSI Pm m  Character Attributes (SGR).
+ *
+ * CSI Ps ; Ps H
+ *     Cursor Position [row;column] (default = [1,1]) (CUP).
+ */
 /* This function writes the whole screen using VT100 escape characters
  * starting from the logical state of the editor in the global state 'E'. */
 void editorRefreshScreen(void) {
@@ -890,7 +1099,9 @@ void editorRefreshScreen(void) {
     for (y = 0; y < E.screenrows; y++) {
         int filerow = E.rowoff+y;
 
+        // The content of the file is not sufficient for display.
         if (filerow >= E.numrows) {
+            // startup screen
             if (E.numrows == 0 && y == E.screenrows/3) {
                 char welcome[80];
                 int welcomelen = snprintf(welcome,sizeof(welcome),
@@ -900,7 +1111,7 @@ void editorRefreshScreen(void) {
                     abAppend(&ab,"~",1);
                     padding--;
                 }
-                while(padding--) abAppend(&ab," ",1);
+                while(padding--) abAppend(&ab," ",1); // prefix whitespace
                 abAppend(&ab,welcome,welcomelen);
             } else {
                 abAppend(&ab,"~\x1b[0K\r\n",7);
@@ -922,7 +1133,7 @@ void editorRefreshScreen(void) {
                     char sym;
                     abAppend(&ab,"\x1b[7m",4);
                     if (c[j] <= 26)
-                        sym = '@'+c[j];
+                        sym = '@'+c[j]; // @, A ... Z
                     else
                         sym = '?';
                     abAppend(&ab,&sym,1);
@@ -997,6 +1208,8 @@ void editorRefreshScreen(void) {
     abFree(&ab);
 }
 
+// https://man7.org/linux/man-pages/man2/time.2.html
+// https://cplusplus.com/reference/cstdio/vsnprintf/
 /* Set an editor status message for the second line of the status, at the
  * end of the screen. */
 void editorSetStatusMessage(const char *fmt, ...) {
@@ -1011,6 +1224,8 @@ void editorSetStatusMessage(const char *fmt, ...) {
 
 #define KILO_QUERY_LEN 256
 
+// TODO: When inserting non-printable characters into the line, there are some highlighting errors
+// in the 'find' function.
 void editorFind(int fd) {
     char query[KILO_QUERY_LEN+1] = {0};
     int qlen = 0;
@@ -1021,7 +1236,7 @@ void editorFind(int fd) {
 
 #define FIND_RESTORE_HL do { \
     if (saved_hl) { \
-        memcpy(E.row[saved_hl_line].hl,saved_hl, E.row[saved_hl_line].rsize); \
+        memcpy(E.row[saved_hl_line].hl, saved_hl, E.row[saved_hl_line].rsize); \
         free(saved_hl); \
         saved_hl = NULL; \
     } \
@@ -1041,7 +1256,7 @@ void editorFind(int fd) {
             if (qlen != 0) query[--qlen] = '\0';
             last_match = -1;
         } else if (c == ESC || c == ENTER) {
-            if (c == ESC) {
+            if (c == ESC) { // restore
                 E.cx = saved_cx; E.cy = saved_cy;
                 E.coloff = saved_coloff; E.rowoff = saved_rowoff;
             }
@@ -1091,10 +1306,15 @@ void editorFind(int fd) {
                     memcpy(saved_hl,row->hl,row->rsize);
                     memset(row->hl+match_offset,HL_MATCH,qlen);
                 }
+                // cy: row
+                // cx: col
                 E.cy = 0;
                 E.cx = match_offset;
+                // set 'rowoff' and 'coloff'
                 E.rowoff = current;
                 E.coloff = 0;
+                // If the highlighted position exceeds the number of columns on the screen, then
+                // adjust the 'coloff' and 'cx' values.
                 /* Scroll horizontally as needed. */
                 if (E.cx > E.screencols) {
                     int diff = E.cx - E.screencols;
@@ -1115,9 +1335,11 @@ void editorMoveCursor(int key) {
     int rowlen;
     erow *row = (filerow >= E.numrows) ? NULL : &E.row[filerow];
 
+    // cy: row
+    // cx: col
     switch(key) {
     case ARROW_LEFT:
-        if (E.cx == 0) {
+        if (E.cx == 0) { // leftmost
             if (E.coloff) {
                 E.coloff--;
             } else {
@@ -1141,7 +1363,7 @@ void editorMoveCursor(int key) {
             } else {
                 E.cx += 1;
             }
-        } else if (row && filecol == row->size) {
+        } else if (row && filecol == row->size) { // rightmost
             E.cx = 0;
             E.coloff = 0;
             if (E.cy == E.screenrows-1) {
@@ -1182,6 +1404,7 @@ void editorMoveCursor(int key) {
     }
 }
 
+// Handling various keystrokes.
 /* Process events arriving from the standard input, which is, the user
  * is typing stuff on the terminal. */
 #define KILO_QUIT_TIMES 3
@@ -1258,6 +1481,21 @@ int editorFileWasModified(void) {
     return E.dirty;
 }
 
+/*
+ * https://pubs.opengroup.org/onlinepubs/9699919799.2018edition/
+ *
+ * The following symbolic values in <unistd.h> define the file descriptors that shall be associated
+ * with the C-language stdin, stdout, and stderr when the application is started:
+ *
+ * STDIN_FILENO
+ *     Standard input value, stdin. Its value is 0.
+ * STDOUT_FILENO
+ *     Standard output value, stdout. Its value is 1.
+ * STDERR_FILENO
+ *     Standard error value, stderr. Its value is 2.
+ *
+ * The stderr stream is expected to be open for reading and writing.
+*/
 void updateWindowSize(void) {
     if (getWindowSize(STDIN_FILENO,STDOUT_FILENO,
                       &E.screenrows,&E.screencols) == -1) {
@@ -1267,6 +1505,7 @@ void updateWindowSize(void) {
     E.screenrows -= 2; /* Get room for status bar. */
 }
 
+// https://gcc.gnu.org/onlinedocs/gcc/Attribute-Syntax.html
 void handleSigWinCh(int unused __attribute__((unused))) {
     updateWindowSize();
     if (E.cy > E.screenrows) E.cy = E.screenrows - 1;
@@ -1274,6 +1513,26 @@ void handleSigWinCh(int unused __attribute__((unused))) {
     editorRefreshScreen();
 }
 
+/*
+ * https://pubs.opengroup.org/onlinepubs/9699919799.2018edition/
+ * https://man7.org/linux/man-pages/man2/signal.2.html
+ *
+ * typedef void (*sighandler_t)(int);
+ * sighandler_t signal(int signum, sighandler_t handler);
+ *
+ * The signal() function chooses one of three ways in which receipt of the signal number sig is to
+ * be subsequently handled. If the value of func is SIG_DFL, default handling for that signal shall
+ * occur. If the value of func is SIG_IGN, the signal shall be ignored. Otherwise, the application
+ * shall ensure that func points to a function to be called when that signal occurs. An invocation
+ * of such a function because of a signal, or (recursively) of any further functions called by that
+ * invocation (other than functions in the standard library), is called a "signal handler".
+ */
+/*
+ * https://man7.org/linux/man-pages/man7/signal.7.html
+ * https://man7.org/linux/man-pages/man4/tty_ioctl.4.html
+ *
+ * SIGWINCH
+ */
 void initEditor(void) {
     E.cx = 0;
     E.cy = 0;
