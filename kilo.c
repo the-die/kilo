@@ -693,9 +693,9 @@ void editorRowAppendString(erow *row, char *s, size_t len) {
 /* Delete the character at offset 'at' from the specified row. */
 void editorRowDelChar(erow *row, int at) {
     if (row->size <= at) return;
-    memmove(row->chars+at,row->chars+at+1,row->size-at);
-    editorUpdateRow(row);
+    memmove(row->chars+at, row->chars+at+1, row->size-at);
     row->size--;
+    editorUpdateRow(row);
     E.dirty++;
 }
 
