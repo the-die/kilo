@@ -1328,6 +1328,16 @@ void editorFind(int fd) {
 
 /* ========================= Editor events handling  ======================== */
 
+/*
+ * TODO: Fix cursor movement error.
+ *
+ *      |----------------------------------------------| E.screencols
+ * $$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$@$$$$$$$$$$$$$$$$$$$$ row->size
+ * $$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$@$$$$$$$$$$$$$$$$$$$$$$$$$$$$ row->rsize
+ *       ^                              ^
+ *    E.coloff                        E.cx
+ * editorRefreshScreen fix E.cx
+ */
 /* Handle cursor position change because arrow keys were pressed. */
 void editorMoveCursor(int key) {
     int filerow = E.rowoff+E.cy;
